@@ -113,14 +113,14 @@ import androidx.camera.core.impl.utils.futures.Futures;
 import androidx.camera.core.internal.IoConfig;
 import androidx.camera.core.internal.TargetConfig;
 import androidx.camera.core.internal.YuvToJpegProcessor;
-import androidx.camera.core.internal.compat.quirk.DeviceQuirks;
-import androidx.camera.core.internal.compat.quirk.ImageCaptureWashedOutImageQuirk;
 import androidx.camera.core.internal.compat.quirk.SoftwareJpegEncodingPreferredQuirk;
+import androidx.camera.core.internal.compat.quirk.UseTorchAsFlashQuirk;
 import androidx.camera.core.internal.compat.workaround.ExifRotationAvailability;
 import androidx.camera.core.internal.utils.ImageUtil;
 import androidx.concurrent.futures.CallbackToFutureAdapter;
 import androidx.core.util.Consumer;
 import androidx.core.util.Preconditions;
+import androidx.lifecycle.LifecycleOwner;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
@@ -234,6 +234,7 @@ public final class ImageCapture extends UseCase {
     private static final String TAG = "ImageCapture";
     @SuppressWarnings("WeakerAccess") /* synthetic accessor */
     private static final long CHECK_3A_TIMEOUT_IN_MS = 1000L;
+    private static final long CHECK_3A_WITH_FLASH_TIMEOUT_IN_MS = 5000L;
     private static final int MAX_IMAGES = 2;
     // TODO(b/149336664) Move the quality to a compatibility class when there is a per device case.
     private static final byte JPEG_QUALITY_MAXIMIZE_QUALITY_MODE = 100;
@@ -311,7 +312,7 @@ public final class ImageCapture extends UseCase {
      * <p>When the flag is set, torch will be opened and closed to replace the flash fired by flash
      * mode.
      */
-    private final boolean mUseTorchFlash;
+    private boolean mUseTorchFlash = false;
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // [UseCase attached dynamic] - Can change but is only available when the UseCase is attached.
@@ -360,11 +361,6 @@ public final class ImageCapture extends UseCase {
             mEnableCheck3AConverged = true; // check 3A convergence in MAX_QUALITY mode
         } else {
             mEnableCheck3AConverged = false; // skip 3A convergence in MIN_LATENCY mode
-        }
-
-        mUseTorchFlash = DeviceQuirks.get(ImageCaptureWashedOutImageQuirk.class) != null;
-        if (mUseTorchFlash) {
-            Logger.d(TAG, "Open and close torch to replace the flash fired by flash mode.");
         }
     }
 
@@ -416,16 +412,12 @@ public final class ImageCapture extends UseCase {
             }
 
             // TODO: To allow user to use an Executor for the image processing.
-            mProcessingImageReader =
-                    new ProcessingImageReader(
-                            resolution.getWidth(),
-                            resolution.getHeight(),
-                            inputFormat,
-                            mMaxCaptureStages,
-                            /* postProcessExecutor */mExecutor,
-                            getCaptureBundle(CaptureBundles.singleDefaultCaptureBundle()),
-                            captureProcessor,
-                            outputFormat);
+            mProcessingImageReader = new ProcessingImageReader.Builder(resolution.getWidth(),
+                    resolution.getHeight(), inputFormat, mMaxCaptureStages,
+                    getCaptureBundle(CaptureBundles.singleDefaultCaptureBundle()),
+                    captureProcessor).setPostProcessExecutor(mExecutor).setOutputFormat(
+                    outputFormat).build();
+
             mMetadataMatchingCaptureCallback = mProcessingImageReader.getCameraCaptureCallback();
             mImageReader = new SafeCloseImageReaderProxy(mProcessingImageReader);
             if (softwareJpegProcessor != null) {
@@ -458,7 +450,9 @@ public final class ImageCapture extends UseCase {
         if (mDeferrableSurface != null) {
             mDeferrableSurface.close();
         }
-        mDeferrableSurface = new ImmediateSurface(mImageReader.getSurface());
+        mDeferrableSurface = new ImmediateSurface(
+                mImageReader.getSurface(), new Size(mImageReader.getWidth(),
+                mImageReader.getHeight()), mImageReader.getImageFormat());
         mDeferrableSurface.getTerminationFuture().addListener(
                 imageReaderProxy::safeClose, CameraXExecutors.mainThreadExecutor());
         sessionConfigBuilder.addNonRepeatingSurface(mDeferrableSurface);
@@ -773,6 +767,63 @@ public final class ImageCapture extends UseCase {
     @CaptureMode
     public int getCaptureMode() {
         return mCaptureMode;
+    }
+
+    /**
+     * Gets selected resolution information of the {@link ImageCapture}.
+     *
+     * <p>The returned {@link ResolutionInfo} will be expressed in the coordinates of the camera
+     * sensor. Note that the resolution might not be the same as the resolution of the received
+     * image by calling {@link #takePicture} because the received image might have been rotated
+     * to the upright orientation using the target rotation setting by the device.
+     *
+     * <p>The resolution information might change if the use case is unbound and then rebound,
+     * {@link #setTargetRotation(int)} is called to change the target rotation setting, or
+     * {@link #setCropAspectRatio(Rational)} is called to change the crop aspect ratio setting.
+     * The application needs to call {@link #getResolutionInfo()} again to get the latest
+     * {@link ResolutionInfo} for the changes.
+     *
+     * @return the resolution information if the use case has been bound by the
+     * {@link androidx.camera.lifecycle.ProcessCameraProvider#bindToLifecycle(LifecycleOwner
+     * , CameraSelector, UseCase...)} API, or null if the use case is not bound yet.
+     */
+    @Nullable
+    @Override
+    public ResolutionInfo getResolutionInfo() {
+        return super.getResolutionInfo();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @hide
+     */
+    @RestrictTo(Scope.LIBRARY_GROUP)
+    @Nullable
+    @Override
+    protected ResolutionInfo getResolutionInfoInternal() {
+        CameraInternal camera = getCamera();
+        Size resolution = getAttachedSurfaceResolution();
+
+        if (camera == null || resolution == null) {
+            return null;
+        }
+
+        Rect cropRect = getViewPortCropRect();
+
+        Rational cropAspectRatio = mCropAspectRatio;
+
+        if (cropRect == null) {
+            if (cropAspectRatio != null) {
+                cropRect = ImageUtil.computeCropRectFromAspectRatio(resolution, cropAspectRatio);
+            } else {
+                cropRect = new Rect(0, 0, resolution.getWidth(), resolution.getHeight());
+            }
+        }
+
+        int rotationDegrees = getRelativeRotation(camera);
+
+        return ResolutionInfo.create(resolution, cropRect, rotationDegrees);
     }
 
     /**
@@ -1288,6 +1339,14 @@ public final class ImageCapture extends UseCase {
         // enforceSoftwareJpegConstraints() hasn't removed the request.
         mUseSoftwareJpeg = useCaseConfig.isSoftwareJpegEncoderRequested();
 
+        CameraInternal camera = getCamera();
+        Preconditions.checkNotNull(camera, "Attached camera cannot be null");
+        mUseTorchFlash = camera.getCameraInfoInternal().getCameraQuirks()
+                .contains(UseTorchAsFlashQuirk.class);
+        if (mUseTorchFlash) {
+            Logger.d(TAG, "Open and close torch to replace the flash fired by flash mode.");
+        }
+
         mExecutor =
                 Executors.newFixedThreadPool(
                         1,
@@ -1435,6 +1494,11 @@ public final class ImageCapture extends UseCase {
             return Futures.immediateFuture(false);
         }
 
+        long waitTimeout = CHECK_3A_TIMEOUT_IN_MS;
+        if (state.mIsAePrecaptureTriggered || state.mIsTorchOpened) {
+            waitTimeout = CHECK_3A_WITH_FLASH_TIMEOUT_IN_MS;
+        }
+
         return mSessionCallbackChecker.checkCaptureResult(
                 new CaptureCallbackChecker.CaptureResultChecker<Boolean>() {
                     @Override
@@ -1452,7 +1516,7 @@ public final class ImageCapture extends UseCase {
                         return null;
                     }
                 },
-                CHECK_3A_TIMEOUT_IN_MS,
+                waitTimeout,
                 false);
     }
 
@@ -2815,6 +2879,12 @@ public final class ImageCapture extends UseCase {
          *
          * <p>If not set, the largest available resolution will be selected to use. Usually,
          * users will intend to get the largest still image that the camera device can support.
+         *
+         * <p>When using the <code>camera-camera2</code> CameraX implementation, which resolution
+         * will be finally selected will depend on the camera device's hardware level and the
+         * bound use cases combination. For more details see the guaranteed supported
+         * configurations tables in {@link android.hardware.camera2.CameraDevice}'s
+         * <a href="https://developer.android.com/reference/android/hardware/camera2/CameraDevice#regular-capture">Regular capture</a> section.
          *
          * @param resolution The target resolution to choose from supported output sizes list.
          * @return The current Builder.

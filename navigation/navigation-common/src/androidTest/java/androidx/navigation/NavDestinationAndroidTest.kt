@@ -29,6 +29,13 @@ import org.junit.Test
 
 @SmallTest
 class NavDestinationAndroidTest {
+    companion object {
+        private const val DESTINATION_ROUTE = "test"
+        private const val URI_PATTERN = "uriPattern"
+        private const val TEST_ARG_KEY = "stringArg"
+        private const val TEST_ARG_VALUE_AAA = "aaa"
+    }
+
     @Test
     fun setBlankRoute() {
         val destination = NoOpNavigator().createDestination()
@@ -109,7 +116,7 @@ class NavDestinationAndroidTest {
 
         destination.addDeepLink("www.example.com/users/index.html")
 
-        destination.addArgument("id", stringArgument())
+        destination.addArgument("name", stringArgument())
         destination.addDeepLink("www.example.com/users/{name}")
 
         val match = destination.matchDeepLink(
@@ -122,6 +129,31 @@ class NavDestinationAndroidTest {
         assertWithMessage("Deep link should pick the exact match")
             .that(match?.matchingArgs?.size())
             .isEqualTo(0)
+    }
+
+    @Test
+    fun matchDeepLinkBestMatchExactWithQuery() {
+        val destination = NoOpNavigator().createDestination()
+
+        destination.addArgument("tab", stringArgument())
+        destination.addDeepLink("www.example.com/users/anonymous?tab={tab}")
+
+        destination.addArgument("name", stringArgument())
+        destination.addDeepLink("www.example.com/users/{name}?tab={tab}")
+
+        val match = destination.matchDeepLink(
+            Uri.parse("https://www.example.com/users/anonymous?tab=favorite")
+        )
+
+        assertWithMessage("Deep link should match")
+            .that(match)
+            .isNotNull()
+        assertWithMessage("Deep link should pick the exact match with query")
+            .that(match?.matchingArgs?.size())
+            .isEqualTo(1)
+        assertWithMessage("Deep link should extract tab argument correctly")
+            .that(match?.matchingArgs?.getString("tab"))
+            .isEqualTo("favorite")
     }
 
     @Test
@@ -304,5 +336,57 @@ class NavDestinationAndroidTest {
                 putInt("stringArg", 123)
             }
         )
+    }
+
+    @Test
+    fun equalsNull() {
+        val destination = NoOpNavigator().createDestination()
+
+        assertThat(destination.equals(null)).isFalse()
+    }
+
+    @Test
+    fun equals() {
+        val destination = NoOpNavigator().createDestination()
+        destination.route = DESTINATION_ROUTE
+        destination.addDeepLink(URI_PATTERN)
+        destination.addArgument(TEST_ARG_KEY, stringArgument(TEST_ARG_VALUE_AAA))
+
+        val destination2 = NoOpNavigator().createDestination()
+        destination2.route = DESTINATION_ROUTE
+        destination2.addDeepLink(URI_PATTERN)
+        destination2.addArgument(TEST_ARG_KEY, stringArgument(TEST_ARG_VALUE_AAA))
+
+        assertThat(destination == destination2).isTrue()
+    }
+
+    @Test
+    fun equalsDifferentDeepLink() {
+        val destination = NoOpNavigator().createDestination()
+        destination.route = DESTINATION_ROUTE
+        destination.addDeepLink(URI_PATTERN)
+        destination.addArgument(TEST_ARG_KEY, stringArgument(TEST_ARG_VALUE_AAA))
+
+        val destination2 = NoOpNavigator().createDestination()
+        destination2.route = DESTINATION_ROUTE
+        destination2.addDeepLink("differentPattern")
+        destination2.addArgument(TEST_ARG_KEY, stringArgument(TEST_ARG_VALUE_AAA))
+
+        assertThat(destination == destination2).isFalse()
+    }
+
+    @Test
+    fun equalsDifferentArgumentValues() {
+        val destination = NoOpNavigator().createDestination()
+        destination.route = DESTINATION_ROUTE
+        destination.addDeepLink(URI_PATTERN)
+        destination.addArgument(TEST_ARG_KEY, stringArgument(TEST_ARG_VALUE_AAA))
+
+        val destination2 = NoOpNavigator().createDestination()
+        destination2.route = DESTINATION_ROUTE
+        destination2.addDeepLink(URI_PATTERN)
+        destination2.addArgument(TEST_ARG_KEY, stringArgument("bbb"))
+
+        assertThat(destination == destination2).isFalse()
     }
 }

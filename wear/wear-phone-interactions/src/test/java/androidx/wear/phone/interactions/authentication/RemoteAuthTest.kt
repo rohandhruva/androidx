@@ -54,8 +54,7 @@ public class RemoteAuthTest {
                 .setAuthProviderUrl(Uri.parse(authProviderUrlB))
                 .setCodeChallenge(CodeChallenge(CodeVerifier()))
                 .build()
-        private val response =
-            OAuthResponse.Builder().setResponseUrl(responseUrl).build()
+        private val response = OAuthResponse.Builder().setResponseUrl(responseUrl).build()
 
         // Note: This can't be static as Robolectric isn't set up at class init time.
         private val mServiceName = ComponentName(
@@ -69,6 +68,7 @@ public class RemoteAuthTest {
     private var fakeService: FakeClockworkHomeAuthService = FakeClockworkHomeAuthService()
     private var clientUnderTest: RemoteAuthClient =
         RemoteAuthClient(fakeServiceBinder, DIRECT_EXECUTOR, appPackageName)
+    private val executor: Executor = SyncExecutor()
 
     @Test
     public fun doesntConnectUntilARequestIsMade() {
@@ -86,6 +86,7 @@ public class RemoteAuthTest {
                 .setAuthProviderUrl(Uri.parse(requestUri))
                 .setCodeChallenge(CodeChallenge(CodeVerifier()))
                 .build(),
+            executor,
             mockCallback
         )
         // THEN a connection is made to Clockwork Home's Auth service
@@ -95,18 +96,18 @@ public class RemoteAuthTest {
     @Test
     public fun sendAuthorizationRequestShouldCallBinderMethod() {
         // WHEN an authorization request is sent
-        clientUnderTest.sendAuthorizationRequest(requestA, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestA, executor, mockCallback)
         fakeServiceBinder.completeConnection()
         // THEN a request is made to Clockwork Home
         val request = fakeService.requests[0]
         val requestReceived = request.first
         // THEN the request url is set correctly
         Assert.assertEquals(
-            requestA.getRequestUrl(),
-            requestReceived.getRequestUrl()
+            requestA.requestUrl,
+            requestReceived.requestUrl
         )
         Assert.assertEquals(
-            requestReceived.getRequestUrl().toString().indexOf(authProviderUrlA),
+            requestReceived.requestUrl.toString().indexOf(authProviderUrlA),
             0
         )
     }
@@ -114,8 +115,8 @@ public class RemoteAuthTest {
     @Test
     public fun twoQueuedAuthorizationRequestsBeforeConnectCompletes() {
         // GIVEN two authorization requests were made before connecting to Clockwork Home completes
-        clientUnderTest.sendAuthorizationRequest(requestA, mockCallback)
-        clientUnderTest.sendAuthorizationRequest(requestB, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestA, executor, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestB, executor, mockCallback)
         // WHEN the connection does complete
         fakeServiceBinder.completeConnection()
         // THEN two requests are made to Clockwork Home
@@ -124,19 +125,19 @@ public class RemoteAuthTest {
         Assert.assertEquals(2, fakeService.requests.size.toLong())
         // THEN the request url is set correctly for both (A then B)
         Assert.assertEquals(
-            requestA.getRequestUrl(),
-            requestAReceived.getRequestUrl()
+            requestA.requestUrl,
+            requestAReceived.requestUrl
         )
         Assert.assertEquals(
-            requestB.getRequestUrl(),
-            requestBReceived.getRequestUrl()
+            requestB.requestUrl,
+            requestBReceived.requestUrl
         )
         Assert.assertEquals(
-            requestAReceived.getRequestUrl().toString().indexOf(authProviderUrlA),
+            requestAReceived.requestUrl.toString().indexOf(authProviderUrlA),
             0
         )
         Assert.assertEquals(
-            requestBReceived.getRequestUrl().toString().indexOf(authProviderUrlB),
+            requestBReceived.requestUrl.toString().indexOf(authProviderUrlB),
             0
         )
     }
@@ -145,7 +146,7 @@ public class RemoteAuthTest {
     @Throws(RemoteException::class)
     public fun requestCompletionShouldCallBackToClient() {
         // GIVEN an authorization request was sent
-        clientUnderTest.sendAuthorizationRequest(requestA, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestA, executor, mockCallback)
         fakeServiceBinder.completeConnection()
         val request = fakeService.requests[0]
         // WHEN the request completes
@@ -157,10 +158,10 @@ public class RemoteAuthTest {
     @Throws(RemoteException::class)
     public fun doesntDisconnectWhenRequestStillInProgress() {
         // GIVEN 2 authorization requests were sent
-        clientUnderTest.sendAuthorizationRequest(requestA, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestA, executor, mockCallback)
         // GIVEN the async binding to Clockwork Home completed after the 1st but before the 2nd
         fakeServiceBinder.completeConnection()
-        clientUnderTest.sendAuthorizationRequest(requestB, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestB, executor, mockCallback)
         // WHEN the first one completes
         RemoteAuthService.sendResponseToCallback(
             response,
@@ -175,10 +176,10 @@ public class RemoteAuthTest {
     @Throws(RemoteException::class)
     public fun disconnectsWhenAllRequestsComplete() {
         // GIVEN 2 authorization requests were sent
-        clientUnderTest.sendAuthorizationRequest(requestA, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestA, executor, mockCallback)
         // GIVEN the async binding to Clockwork Home completed after the 1st but before the 2nd
         fakeServiceBinder.completeConnection()
-        clientUnderTest.sendAuthorizationRequest(requestB, mockCallback)
+        clientUnderTest.sendAuthorizationRequest(requestB, executor, mockCallback)
         RemoteAuthService.sendResponseToCallback(
             response,
             fakeService.requests[0].second
@@ -269,5 +270,11 @@ public class RemoteAuthTest {
                 mockCallback.onAuthorizationResponse(request, response)
             }
         }
+    }
+}
+
+private class SyncExecutor : Executor {
+    override fun execute(command: Runnable?) {
+        command?.run()
     }
 }

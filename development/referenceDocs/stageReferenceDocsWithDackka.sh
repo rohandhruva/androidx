@@ -27,6 +27,7 @@ readonly javaLibraryDirs=(
 #  "collection"
   "navigation"
   "paging"
+  "wear"
   "window"
 )
 readonly kotlinLibraryDirs=(
@@ -35,6 +36,7 @@ readonly kotlinLibraryDirs=(
 #  "collection"
   "navigation"
   "paging"
+  "wear"
   "window"
 )
 
@@ -92,12 +94,10 @@ cd $newDir
 
 # Remove directories we never publish
 rm en -rf
-rm reference/android -rf
 rm reference/java -rf
 rm reference/org -rf
 rm reference/hierarchy.html
 rm reference/kotlin/org -rf
-rm reference/kotlin/android -rf
 
 # Move package list into the correct location
 mv reference/kotlin/package-list reference/kotlin/androidx/package-list

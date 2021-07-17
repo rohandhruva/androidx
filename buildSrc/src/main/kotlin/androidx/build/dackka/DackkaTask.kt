@@ -44,6 +44,10 @@ abstract class DackkaTask @Inject constructor(
     @InputFiles
     lateinit var dependenciesClasspath: FileCollection
 
+    // Directory containing the code samples from framework
+    @InputFiles
+    lateinit var frameworkSamplesDir: File
+
     // Directory containing the code samples
     @InputFiles
     lateinit var samplesDir: File
@@ -99,10 +103,20 @@ abstract class DackkaTask @Inject constructor(
             "-globalLinks",
             linksConfiguration,
 
+            // Set logging level to only show warnings and errors
+            "-loggingLevel",
+            "WARN",
+
             // Configuration of sources. The generated string looks like this:
             // "-sourceSet -src /path/to/src -samples /path/to/samples ..."
             "-sourceSet",
-            "-src $sourcesDir -samples $samplesDir -classpath $classPath $includesString"
+            "-src $sourcesDir" +
+                " -samples $samplesDir" +
+                " -samples $frameworkSamplesDir" +
+                " -classpath $classPath" +
+                " $includesString",
+
+            "-offlineMode"
         )
     }
 

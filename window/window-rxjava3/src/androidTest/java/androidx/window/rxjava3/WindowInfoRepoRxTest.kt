@@ -20,9 +20,9 @@ import android.graphics.Rect
 import androidx.window.FoldingFeature
 import androidx.window.WindowInfoRepo
 import androidx.window.WindowLayoutInfo
+import androidx.window.WindowMetrics
 import com.nhaarman.mockitokotlin2.mock
 import com.nhaarman.mockitokotlin2.whenever
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Test
 
@@ -33,13 +33,34 @@ import org.junit.Test
  */
 public class WindowInfoRepoRxTest {
 
-    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    public fun testCurrentWindowMetricsObservable() {
+        val expected = WindowMetrics(Rect(0, 1, 2, 3))
+        val mockRepo = mock<WindowInfoRepo>()
+        whenever(mockRepo.currentWindowMetrics).thenReturn(flowOf(expected))
+
+        val testSubscriber = mockRepo.currentWindowMetricsObservable().test()
+
+        testSubscriber.assertValue(expected)
+    }
+
+    @Test
+    public fun testCurrentWindowMetricsFlowable() {
+        val expected = WindowMetrics(Rect(0, 1, 2, 3))
+        val mockRepo = mock<WindowInfoRepo>()
+        whenever(mockRepo.currentWindowMetrics).thenReturn(flowOf(expected))
+
+        val testSubscriber = mockRepo.currentWindowMetricsFlowable().test()
+
+        testSubscriber.assertValue(expected)
+    }
+
     @Test
     public fun testWindowLayoutInfoObservable() {
         val feature = FoldingFeature(
             Rect(0, 100, 100, 100),
-            FoldingFeature.TYPE_HINGE,
-            FoldingFeature.STATE_HALF_OPENED
+            FoldingFeature.Type.HINGE,
+            FoldingFeature.State.HALF_OPENED
         )
         val expected = WindowLayoutInfo.Builder().setDisplayFeatures(listOf(feature)).build()
         val mockRepo = mock<WindowInfoRepo>()
@@ -50,13 +71,12 @@ public class WindowInfoRepoRxTest {
         testSubscriber.assertValue(expected)
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     public fun testWindowLayoutInfoFlowable() {
         val feature = FoldingFeature(
             Rect(0, 100, 100, 100),
-            FoldingFeature.TYPE_HINGE,
-            FoldingFeature.STATE_HALF_OPENED
+            FoldingFeature.Type.HINGE,
+            FoldingFeature.State.HALF_OPENED
         )
         val expected = WindowLayoutInfo.Builder().setDisplayFeatures(listOf(feature)).build()
         val mockRepo = mock<WindowInfoRepo>()

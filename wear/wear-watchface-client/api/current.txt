@@ -2,34 +2,34 @@
 package androidx.wear.watchface.client {
 
   public final class ComplicationSlotState {
-    ctor public ComplicationSlotState(android.graphics.Rect bounds, int boundsType, java.util.List<? extends androidx.wear.complications.data.ComplicationType> supportedTypes, androidx.wear.complications.DefaultComplicationProviderPolicy defaultProviderPolicy, androidx.wear.complications.data.ComplicationType defaultProviderType, boolean isEnabled, boolean isInitiallyEnabled, androidx.wear.complications.data.ComplicationType currentType, boolean fixedComplicationProvider, android.os.Bundle complicationConfigExtras);
+    ctor public ComplicationSlotState(android.graphics.Rect bounds, int boundsType, java.util.List<? extends androidx.wear.complications.data.ComplicationType> supportedTypes, androidx.wear.complications.DefaultComplicationDataSourcePolicy defaultDataSourcePolicy, androidx.wear.complications.data.ComplicationType defaultDataSourceType, boolean isEnabled, boolean isInitiallyEnabled, androidx.wear.complications.data.ComplicationType currentType, boolean fixedComplicationDataSource, android.os.Bundle complicationConfigExtras);
     method public android.graphics.Rect getBounds();
     method public int getBoundsType();
     method public android.os.Bundle getComplicationConfigExtras();
     method public androidx.wear.complications.data.ComplicationType getCurrentType();
-    method public androidx.wear.complications.DefaultComplicationProviderPolicy getDefaultProviderPolicy();
-    method public androidx.wear.complications.data.ComplicationType getDefaultProviderType();
+    method public androidx.wear.complications.DefaultComplicationDataSourcePolicy getDefaultDataSourcePolicy();
+    method public androidx.wear.complications.data.ComplicationType getDefaultDataSourceType();
+    method public boolean getFixedComplicationDataSource();
     method public java.util.List<androidx.wear.complications.data.ComplicationType> getSupportedTypes();
     method public boolean isEnabled();
-    method public boolean isFixedComplicationProvider();
     method public boolean isInitiallyEnabled();
     property public final android.graphics.Rect bounds;
     property public final int boundsType;
     property public final android.os.Bundle complicationConfigExtras;
     property public final androidx.wear.complications.data.ComplicationType currentType;
-    property public final androidx.wear.complications.DefaultComplicationProviderPolicy defaultProviderPolicy;
-    property public final androidx.wear.complications.data.ComplicationType defaultProviderType;
-    property public final boolean fixedComplicationProvider;
+    property public final androidx.wear.complications.DefaultComplicationDataSourcePolicy defaultDataSourcePolicy;
+    property public final androidx.wear.complications.data.ComplicationType defaultDataSourceType;
+    property public final boolean fixedComplicationDataSource;
     property public final boolean isEnabled;
     property public final boolean isInitiallyEnabled;
     property public final java.util.List<androidx.wear.complications.data.ComplicationType> supportedTypes;
   }
 
-  public final class DefaultComplicationProviderPolicyAndType {
-    ctor public DefaultComplicationProviderPolicyAndType(androidx.wear.complications.DefaultComplicationProviderPolicy policy, androidx.wear.complications.data.ComplicationType type);
-    method public androidx.wear.complications.DefaultComplicationProviderPolicy getPolicy();
+  public final class DefaultComplicationDataSourcePolicyAndType {
+    ctor public DefaultComplicationDataSourcePolicyAndType(androidx.wear.complications.DefaultComplicationDataSourcePolicy policy, androidx.wear.complications.data.ComplicationType type);
+    method public androidx.wear.complications.DefaultComplicationDataSourcePolicy getPolicy();
     method public androidx.wear.complications.data.ComplicationType getType();
-    property public final androidx.wear.complications.DefaultComplicationProviderPolicy policy;
+    property public final androidx.wear.complications.DefaultComplicationDataSourcePolicy policy;
     property public final androidx.wear.complications.data.ComplicationType type;
   }
 
@@ -37,12 +37,15 @@ package androidx.wear.watchface.client {
     ctor public DeviceConfig(boolean hasLowBitAmbient, boolean hasBurnInProtection, long analogPreviewReferenceTimeMillis, long digitalPreviewReferenceTimeMillis);
     method public long getAnalogPreviewReferenceTimeMillis();
     method public long getDigitalPreviewReferenceTimeMillis();
-    method public boolean hasBurnInProtection();
-    method public boolean hasLowBitAmbient();
+    method public boolean getHasBurnInProtection();
+    method public boolean getHasLowBitAmbient();
     property public final long analogPreviewReferenceTimeMillis;
     property public final long digitalPreviewReferenceTimeMillis;
     property public final boolean hasBurnInProtection;
     property public final boolean hasLowBitAmbient;
+  }
+
+  public final class DeviceConfigKt {
   }
 
   public interface EditorListener {
@@ -57,10 +60,12 @@ package androidx.wear.watchface.client {
 
   public final class EditorState {
     method public java.util.Map<java.lang.Integer,androidx.wear.complications.data.ComplicationData> getPreviewComplicationsData();
+    method public android.graphics.Bitmap? getPreviewImage();
+    method public boolean getShouldCommitChanges();
     method public androidx.wear.watchface.style.UserStyleData getUserStyle();
     method public androidx.wear.watchface.client.WatchFaceId getWatchFaceId();
-    method public boolean shouldCommitChanges();
     property public final java.util.Map<java.lang.Integer,androidx.wear.complications.data.ComplicationData> previewComplicationsData;
+    property public final android.graphics.Bitmap? previewImage;
     property public final boolean shouldCommitChanges;
     property public final androidx.wear.watchface.style.UserStyleData userStyle;
     property public final androidx.wear.watchface.client.WatchFaceId watchFaceId;
@@ -136,8 +141,8 @@ package androidx.wear.watchface.client {
 
   public interface WatchFaceControlClient extends java.lang.AutoCloseable {
     method public androidx.wear.watchface.client.HeadlessWatchFaceClient? createHeadlessWatchFaceClient(android.content.ComponentName watchFaceName, androidx.wear.watchface.client.DeviceConfig deviceConfig, @Px int surfaceWidth, @Px int surfaceHeight);
-    method public default static suspend Object? createWatchFaceControlClient(android.content.Context p, String context, kotlin.coroutines.Continuation<? super androidx.wear.watchface.client.WatchFaceControlClient> watchFacePackageName);
-    method public java.util.Map<java.lang.Integer,androidx.wear.watchface.client.DefaultComplicationProviderPolicyAndType> getDefaultComplicationProviderPoliciesAndType(android.content.ComponentName watchFaceName);
+    method public default static suspend Object? createWatchFaceControlClient(android.content.Context context, String watchFacePackageName, kotlin.coroutines.Continuation<? super androidx.wear.watchface.client.WatchFaceControlClient> p);
+    method public java.util.Map<java.lang.Integer,androidx.wear.watchface.client.DefaultComplicationDataSourcePolicyAndType> getDefaultComplicationDataSourcePoliciesAndType(android.content.ComponentName watchFaceName);
     method public androidx.wear.watchface.client.EditorServiceClient getEditorServiceClient();
     method public androidx.wear.watchface.client.InteractiveWatchFaceClient? getInteractiveWatchFaceClientInstance(String instanceId);
     method public suspend Object? getOrCreateInteractiveWatchFaceClient(String id, androidx.wear.watchface.client.DeviceConfig deviceConfig, androidx.wear.watchface.client.WatchUiState watchUiState, androidx.wear.watchface.style.UserStyleData? userStyle, java.util.Map<java.lang.Integer,? extends androidx.wear.complications.data.ComplicationData>? slotIdToComplicationData, kotlin.coroutines.Continuation<? super androidx.wear.watchface.client.InteractiveWatchFaceClient> p);
@@ -164,8 +169,8 @@ package androidx.wear.watchface.client {
 
   public final class WatchUiState {
     ctor public WatchUiState(boolean inAmbientMode, int interruptionFilter);
+    method public boolean getInAmbientMode();
     method public int getInterruptionFilter();
-    method public boolean inAmbientMode();
     property public final boolean inAmbientMode;
     property public final int interruptionFilter;
   }

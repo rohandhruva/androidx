@@ -69,6 +69,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /**
  * This test intentionally uses real dispatchers to mimic the real use case.
@@ -82,6 +84,7 @@ class PagingSourceTest {
     private lateinit var itemStore: ItemStore
     private val queryExecutor = FilteringExecutor()
     private val mainThreadQueries = mutableListOf<Pair<String, String>>()
+    private val pagingSources = mutableListOf<PagingSource<Int, PagingEntity>>()
 
     @Before
     fun init() {
@@ -115,6 +118,7 @@ class PagingSourceTest {
         // Check no mainThread queries happened.
         assertThat(mainThreadQueries).isEmpty()
         coroutineScope.cancel()
+        pagingSources.clear()
     }
 
     @Test
@@ -174,8 +178,8 @@ class PagingSourceTest {
                 itemStore.peekItems()
             ).containsExactlyElementsIn(
                 items.createExpected(
-                    // This is what paging picks, could change if paging's heuristic changes
-                    fromIndex = 93,
+                    // Paging 3 implementation loads starting from initial key
+                    fromIndex = 98,
                     toIndex = 100
                 )
             )
@@ -196,7 +200,103 @@ class PagingSourceTest {
     }
 
     @Test
-    fun dataChangesWithDelayedInvalidation() {
+    fun prependWithDelayedInvalidation() {
+        val items = createItems(startId = 0, count = 90)
+        db.dao.insert(items)
+
+        val pager = Pager(
+            config = CONFIG,
+            initialKey = 20,
+            pagingSourceFactory = { db.dao.loadItems().also { pagingSources.add(it) } }
+        )
+
+        runTest(pager) {
+            itemStore.awaitInitialLoad()
+            assertThat(
+                itemStore.peekItems()
+            ).containsExactlyElementsIn(
+                // should load starting from initial Key = 30
+                items.createExpected(
+                    fromIndex = 20,
+                    toIndex = 20 + CONFIG.initialLoadSize
+                )
+            )
+            assertThat(db.invalidationTracker.pendingRefresh).isFalse()
+            // now do some changes in the database but don't let change notifications go through
+            // to the data source. it should not crash :)
+            queryExecutor.filterFunction = { runnable ->
+                runnable !== db.invalidationTracker.refreshRunnable
+            }
+            db.dao.deleteItems(
+                items.subList(0, 60).map { it.id }
+            )
+            // make sure invalidation requests a refresh
+            db.invalidationTracker.awaitPendingRefresh()
+
+            // make sure we blocked the refresh runnable until after the exception generates a
+            // new paging source
+            queryExecutor.awaitDeferredSizeAtLeast(1)
+
+            // Now get more items. The pagingSource's load() will check for invalidation and then
+            // return LoadResult.Invalid, causing a second generation paging source to be generated.
+            itemStore.get(2)
+
+            itemStore.awaitGeneration(2)
+            assertTrue(pagingSources[0].invalid)
+            itemStore.awaitInitialLoad()
+
+            // the initial load triggers a call to refreshVersionsAsync which calls
+            // mRefreshRunnable. The runnable is getting filtered out but we need this one to
+            // complete, so we executed the latest queued mRefreshRunnable.
+            assertThat(queryExecutor.deferredSize()).isEqualTo(2)
+            queryExecutor.executeLatestDeferred()
+            assertThat(queryExecutor.deferredSize()).isEqualTo(1)
+
+            // it might be reloaded in any range so just make sure everything is there
+            // expects 30 items because items 60 - 89 left in database, so presenter should have
+            // items 60-68 from initialLoad + 21 null placeholders
+            assertThat(itemStore.peekItems()).hasSize(30)
+            withContext(Dispatchers.Main) {
+                (0 until 10).forEach {
+                    itemStore.get(it)
+                }
+            }
+            // now ensure all of them are loaded
+            // only waiting for 9 items because because the 10th item and onwards are nulls from
+            // placeholders
+            (0 until 9).forEach {
+                assertThat(
+                    itemStore.awaitItem(it)
+                ).isEqualTo(
+                    items[60 + it]
+                )
+            }
+
+            // Runs the original invalidationTracker.refreshRunnable.
+            // Note that the second initial load's call to mRefreshRunnable resets the flag to
+            // false, so this mRefreshRunnable will not detect changes in the table anymore.
+            assertThat(db.invalidationTracker.pendingRefresh).isFalse()
+            queryExecutor.executeAll()
+
+            itemStore.awaitInitialLoad()
+
+            // make sure only two generations of paging sources have been created
+            assertTrue(!pagingSources[1].invalid)
+
+            // if a third generation is created, awaitGeneration(3) will return instead of timing
+            // out.
+            val expectError = assertFailsWith<AssertionError> {
+                itemStore.awaitGeneration(3)
+            }
+            assertThat(expectError.message).isEqualTo("didn't complete in expected time")
+
+            assertThat(itemStore.currentGenerationId).isEqualTo(2)
+            assertThat(pagingSources.size).isEqualTo(2)
+        }
+    }
+
+    @Test
+    fun appendWithDelayedInvalidation() {
         val items = createItems(startId = 0, count = 90)
         db.dao.insert(items)
         runTest {
@@ -220,16 +320,29 @@ class PagingSourceTest {
             )
             // make sure invalidation requests a refresh
             db.invalidationTracker.awaitPendingRefresh()
-            // make sure we blocked the refresh runnable to ensure test makes sense
+            // make sure we blocked the refresh runnable until after the exception generates a
+            // new paging source
             queryExecutor.awaitDeferredSizeAtLeast(1)
 
-            // now paging source will not be invalidated so it doesn't know items do not exists.
-            // trigger more to load
+            // Now get more items. The pagingSource's load() will check for invalidation and then
+            // return LoadResult.Invalid, causing a second generation paging source to be generated.
             itemStore.get(70)
-            // this will make it realize that it is invalid so should trigger getting a new
-            // paging source
+
             itemStore.awaitGeneration(2)
+            assertTrue(pagingSources[0].invalid)
+            // initial load is executed but refreshVersionsAsync's call to mRefreshRunnable is
+            // actually queued up here
             itemStore.awaitInitialLoad()
+            // the initial load triggers a call to refreshVersionsAsync which calls
+            // mRefreshRunnable. The runnable is getting filtered out but we need this one to
+            // complete, so we executed the latest queued mRefreshRunnable.
+            assertThat(queryExecutor.deferredSize()).isEqualTo(2)
+            queryExecutor.executeLatestDeferred()
+            assertThat(queryExecutor.deferredSize()).isEqualTo(1)
+
+            // second paging source should be generated
+            assertThat(pagingSources.size).isEqualTo(2)
+
             // it might be reloaded in any range so just make sure everything is there
             assertThat(itemStore.peekItems()).hasSize(10)
             withContext(Dispatchers.Main) {
@@ -245,6 +358,27 @@ class PagingSourceTest {
                     items[80 + it]
                 )
             }
+
+            // Runs the original invalidationTracker.refreshRunnable.
+            // Note that the second initial load's call to mRefreshRunnable resets the flag to
+            // false, so this mRefreshRunnable will not detect changes in the table anymore.
+            assertThat(db.invalidationTracker.pendingRefresh).isFalse()
+            queryExecutor.executeAll()
+
+            itemStore.awaitInitialLoad()
+
+            // make sure only two generations of paging sources have been created
+            assertTrue(!pagingSources[1].invalid)
+
+            // if a third generation is created, awaitGeneration(3) will return instead of timing
+            // out.
+            val expectError = assertFailsWith<AssertionError> {
+                itemStore.awaitGeneration(3)
+            }
+            assertThat(expectError.message).isEqualTo("didn't complete in expected time")
+
+            assertThat(itemStore.currentGenerationId).isEqualTo(2)
+            assertThat(pagingSources.size).isEqualTo(2)
         }
     }
 
@@ -273,7 +407,7 @@ class PagingSourceTest {
         pager: Pager<Int, PagingEntity> =
             Pager(
                 config = CONFIG,
-                pagingSourceFactory = db.dao::loadItems
+                pagingSourceFactory = { db.dao.loadItems().also { pagingSources.add(it) } }
             ),
         block: suspend () -> Unit
     ) {
@@ -519,6 +653,20 @@ class PagingSourceTest {
             copy.forEach(this::execute)
         }
 
+        fun deferredSize(): Int {
+            return deferred.size
+        }
+
+        fun executeAll() {
+            while (deferred.isNotEmpty()) {
+                deferred.removeFirst().run()
+            }
+        }
+
+        fun executeLatestDeferred() {
+            deferred.removeLast().run()
+        }
+
         override fun execute(command: Runnable) {
             lock.withLock {
                 if (filterFunction(command)) {
@@ -543,7 +691,7 @@ class PagingSourceTest {
 private suspend fun <T> withTestTimeout(block: suspend () -> T): T {
     try {
         return withTimeout(
-            timeMillis = TimeUnit.SECONDS.toMillis(10)
+            timeMillis = TimeUnit.SECONDS.toMillis(3)
         ) {
             block()
         }

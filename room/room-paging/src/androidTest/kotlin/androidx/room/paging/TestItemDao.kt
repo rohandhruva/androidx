@@ -19,6 +19,7 @@ package androidx.room.paging
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
+import androidx.room.Query
 
 @Dao
 interface TestItemDao {
@@ -30,4 +31,7 @@ interface TestItemDao {
 
     @Delete
     fun deleteTestItem(testItem: TestItem): Int
+
+    @Query("DELETE FROM TestItem WHERE id >= :start AND id <= :end")
+    fun deleteTestItems(start: Int, end: Int): Int
 }

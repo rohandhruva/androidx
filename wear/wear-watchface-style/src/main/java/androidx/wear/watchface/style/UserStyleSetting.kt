@@ -362,7 +362,7 @@ public sealed class UserStyleSetting(
      * not apply any overrides. Only a single [ComplicationSlotsUserStyleSetting] is permitted in
      * the [UserStyleSchema].
      *
-     * Not to be confused with complication provider selection.
+     * Not to be confused with complication data source selection.
      */
     public class ComplicationSlotsUserStyleSetting : UserStyleSetting {
 
@@ -382,6 +382,8 @@ public sealed class UserStyleSetting(
          */
         public class ComplicationSlotOverlay constructor(
             public val complicationSlotId: Int,
+            @Suppress("AutoBoxing")
+            @get:Suppress("AutoBoxing")
             @get:JvmName("isEnabled")
             public val enabled: Boolean? = null,
             public val complicationSlotBounds: ComplicationSlotBounds? = null,
@@ -398,6 +400,7 @@ public sealed class UserStyleSetting(
                 private var accessibilityTraversalIndex: Int? = null
 
                 /** Overrides the complication's enabled flag. */
+                @Suppress("MissingGetterMatchingBuilder")
                 public fun setEnabled(enabled: Boolean): Builder = apply {
                     this.enabled = enabled
                 }

@@ -17,7 +17,6 @@
 package androidx.build
 
 import androidx.build.dependencyTracker.AffectedModuleDetector
-import androidx.build.gradle.getByType
 import com.android.build.gradle.internal.dsl.LintOptions
 import org.gradle.api.DefaultTask
 import org.gradle.api.Project
@@ -25,6 +24,7 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.TaskAction
+import org.gradle.kotlin.dsl.getByType
 import java.io.File
 import java.util.Locale
 
@@ -46,6 +46,15 @@ fun Project.configureNonAndroidProjectForLint(extension: AndroidXExtension) {
     val lintTask = tasks.named("lint")
     lintTask.configure { task ->
         AffectedModuleDetector.configureTaskGuard(task)
+    }
+    afterEvaluate {
+        tasks.named("lintAnalyze").configure { task ->
+            AffectedModuleDetector.configureTaskGuard(task)
+        }
+        /* TODO: uncomment when we upgrade to AGP 7.1.0-alpha04
+        tasks.named("lintReport").configure { task ->
+            AffectedModuleDetector.configureTaskGuard(task)
+        }*/
     }
     tasks.register("lintDebug") {
         it.dependsOn(lintTask)
@@ -84,6 +93,13 @@ fun Project.configureAndroidProjectForLint(lintOptions: LintOptions, extension: 
             tasks.named("lint${variant.name.capitalize(Locale.US)}").configure { task ->
                 AffectedModuleDetector.configureTaskGuard(task)
             }
+            tasks.named("lintAnalyze${variant.name.capitalize(Locale.US)}").configure { task ->
+                AffectedModuleDetector.configureTaskGuard(task)
+            }
+            /* TODO: uncomment when we upgrade to AGP 7.1.0-alpha04
+            tasks.named("lintReport${variant.name.capitalize(Locale.US)}").configure { task ->
+                AffectedModuleDetector.configureTaskGuard(task)
+            }*/
         }
     }
 }
@@ -102,6 +118,7 @@ private fun Project.setUpLintDebugIfNeeded() {
     }
 }
 
+@Suppress("DEPRECATION") // lintOptions methods
 fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension) {
     project.dependencies.add(
         "lintChecks",
@@ -129,6 +146,9 @@ fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension
             }
             isIgnoreWarnings = true
 
+            // Run lint on tests. Uses top-level lint.xml to specify checks.
+            isCheckTestSources = true
+
             // Write output directly to the console (and nowhere else).
             textReport = true
             htmlReport = false
@@ -137,6 +157,9 @@ fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension
             isExplainIssues = true
             isNoLines = false
             isQuiet = true
+
+            // We run lint on each library, so we don't want transitive checking of each dependency
+            isCheckDependencies = false
 
             fatal("VisibleForTests")
 
@@ -161,9 +184,6 @@ fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension
 
             // Broken in 7.0.0-alpha15 due to b/180408990
             disable("RestrictedApi")
-
-            // Broken in 7.0.0-alpha15 due to b/187343720
-            disable("UnusedResources")
 
             // Broken in 7.0.0-alpha15 due to b/187418637
             disable("EnforceSampledAnnotation")
@@ -201,6 +221,9 @@ fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension
                 disable("BanUncheckedReflection")
             }
 
+            // Broken in 7.0.0-alpha15 due to b/187343720
+            disable("UnusedResources")
+
             // Only run certain checks where API tracking is important.
             if (extension.type.checkApi is RunApiTasks.No) {
                 disable("IllegalExperimentalApiUsage")
@@ -210,7 +233,7 @@ fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension
             if (lintConfig == null) {
                 // suppress warnings more specifically than issue-wide severity (regexes)
                 // Currently suppresses warnings from baseline files working as intended
-                lintConfig = project.rootProject.file("buildSrc/lint.xml")
+                lintConfig = File(project.getSupportRootFolder(), "buildSrc/lint.xml")
             }
 
             // Ideally, teams aren't able to add new violations to a baseline file; they should only
@@ -225,41 +248,17 @@ fun Project.configureLint(lintOptions: LintOptions, extension: AndroidXExtension
 
                 // Analyze tasks are responsible for reading baselines and detecting issues, but
                 // they won't detect any issues that are already in the baselines. Delete them
-                // before the task evaluates up-to-date-ness.
-                listOf(
-                    tasks.named("lintAnalyzeDebug"),
-                    tasks.named("lintAnalyze"),
-                ).forEach { task ->
-                    val removeBaselineTask = project.tasks.register(
-                        "removeBaselineOf${task.name.capitalize(Locale.US)}",
-                        RemoveBaselineTask::class.java,
-                    ) { baselineTask ->
-                        baselineTask.baselineFile.set(lintBaseline)
-                    }
-
-                    task.configure {
-                        it.dependsOn(removeBaselineTask)
-                    }
-                }
+                // before the task evaluates up-to-date-ness using:
+                //
+                //     find . -type f -name lint-baseline.xml -exec rm -f {} \;
 
                 // Regular lint tasks are responsible for reading the output of analyze tasks and
                 // generating baseline files. They will fail if they generate a new baseline but
-                // there are no issues, so we need to delete the file as a finalization step.
-                listOf(
-                    tasks.named("lintDebug"),
-                    tasks.named("lint"),
-                ).forEach { task ->
-                    val removeEmptyBaselineTask = project.tasks.register(
-                        "removeEmptyBaselineOf${task.name.capitalize(Locale.US)}",
-                        RemoveEmptyBaselineTask::class.java,
-                    ) { baselineTask ->
-                        baselineTask.baselineFile.set(lintBaseline)
-                    }
-
-                    task.configure {
-                        it.finalizedBy(removeEmptyBaselineTask)
-                    }
-                }
+                // there are no issues, so we need to delete the file as a finalization step using:
+                //
+                //     find . -type f -name lint-baseline.xml \
+                //         -exec awk -v x=5 'NR==x{exit 1}' {} \; \
+                //         -exec rm -f {} \;
 
                 // Continue running after errors or after creating a new, blank baseline file.
                 // This doesn't work right now due to b/188545420, but it's technically correct.

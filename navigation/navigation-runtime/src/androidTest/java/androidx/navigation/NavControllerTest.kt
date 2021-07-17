@@ -27,7 +27,10 @@ import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.addCallback
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.get
@@ -311,6 +314,52 @@ class NavControllerTest {
 
     @UiThreadTest
     @Test
+    fun testSetSameOnBackPressedDispatcher() {
+        val navController = createNavController()
+        val lifecycleOwner = TestLifecycleOwner(Lifecycle.State.RESUMED)
+        navController.setLifecycleOwner(lifecycleOwner)
+        // Set the graph and navigate to another destination to build up our back stack
+        navController.setGraph(R.navigation.nav_simple)
+        navController.navigate(R.id.second_test)
+
+        val dispatcher = OnBackPressedDispatcher()
+        navController.setOnBackPressedDispatcher(dispatcher)
+        assertThat(dispatcher.hasEnabledCallbacks()).isTrue()
+        // One observer is the NavController itself, the other is the OnBackPressedCallback
+        assertThat(lifecycleOwner.observerCount).isEqualTo(2)
+
+        navController.setOnBackPressedDispatcher(dispatcher)
+        assertThat(dispatcher.hasEnabledCallbacks()).isTrue()
+        // One observer is the NavController itself, the other is the OnBackPressedCallback
+        assertThat(lifecycleOwner.observerCount).isEqualTo(2)
+    }
+
+    @UiThreadTest
+    @Test
+    fun testSetNewOnBackPressedDispatcher() {
+        val navController = createNavController()
+        val lifecycleOwner = TestLifecycleOwner(Lifecycle.State.RESUMED)
+        navController.setLifecycleOwner(lifecycleOwner)
+        // Set the graph and navigate to another destination to build up our back stack
+        navController.setGraph(R.navigation.nav_simple)
+        navController.navigate(R.id.second_test)
+
+        val dispatcher = OnBackPressedDispatcher()
+        navController.setOnBackPressedDispatcher(dispatcher)
+        assertThat(dispatcher.hasEnabledCallbacks()).isTrue()
+        // One observer is the NavController itself, the other is the OnBackPressedCallback
+        assertThat(lifecycleOwner.observerCount).isEqualTo(2)
+
+        val replacementDispatcher = OnBackPressedDispatcher()
+        navController.setOnBackPressedDispatcher(replacementDispatcher)
+        assertThat(replacementDispatcher.hasEnabledCallbacks()).isTrue()
+        assertThat(dispatcher.hasEnabledCallbacks()).isFalse()
+        // One observer is the NavController itself, the other is the new OnBackPressedCallback
+        assertThat(lifecycleOwner.observerCount).isEqualTo(2)
+    }
+
+    @UiThreadTest
+    @Test
     fun testNavigate() {
         val navController = createNavController()
         navController.setGraph(R.navigation.nav_simple)
@@ -386,6 +435,24 @@ class NavControllerTest {
         val navigator = navController.navigatorProvider.getNavigator(TestNavigator::class.java)
         val action = "test.action"
         val deepLink = NavDeepLinkRequest(null, action, null)
+
+        navController.navigate(deepLink)
+        assertThat(navController.currentDestination?.id ?: 0).isEqualTo(R.id.second_test)
+        assertThat(navigator.backStack.size).isEqualTo(2)
+        val intent = navigator.current.arguments?.getParcelable<Intent>(
+            NavController.KEY_DEEP_LINK_INTENT
+        )
+        assertThat(intent?.action).isEqualTo(action)
+    }
+
+    @UiThreadTest
+    @Test
+    fun testNavigateViaDeepLinkActionUnusedUri() {
+        val navController = createNavController()
+        navController.setGraph(R.navigation.nav_simple)
+        val navigator = navController.navigatorProvider.getNavigator(TestNavigator::class.java)
+        val action = "test.action"
+        val deepLink = NavDeepLinkRequest("http://www.example.com".toUri(), action, null)
 
         navController.navigate(deepLink)
         assertThat(navController.currentDestination?.id ?: 0).isEqualTo(R.id.second_test)
@@ -859,14 +926,118 @@ class NavControllerTest {
         val navController = createNavController()
         navController.setGraph(R.navigation.nav_simple)
 
-        var lastReceivedDestinationId = -1
+        val receivedDestinationIds = mutableListOf<Int>()
         navController.addOnDestinationChangedListener { _, destination, _ ->
-            lastReceivedDestinationId = destination.id
+            receivedDestinationIds += destination.id
             if (destination.id == R.id.start_test) {
                 navController.navigate(R.id.second_test)
             }
         }
-        assertThat(lastReceivedDestinationId).isEqualTo(R.id.second_test)
+
+        assertThat(receivedDestinationIds)
+            .containsExactly(R.id.start_test, R.id.second_test)
+            .inOrder()
+    }
+
+    @UiThreadTest
+    @Test
+    fun testPopFromOnDestinationChangedListener() {
+        val navController = createNavController()
+        navController.setGraph(R.navigation.nav_simple)
+
+        val receivedDestinationIds = mutableListOf<Int>()
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            receivedDestinationIds += destination.id
+            if (destination.id == R.id.second_test) {
+                navController.popBackStack()
+            }
+        }
+        navController.navigate(R.id.second_test)
+
+        assertThat(receivedDestinationIds)
+            .containsExactly(R.id.start_test, R.id.second_test, R.id.start_test)
+            .inOrder()
+    }
+
+    @UiThreadTest
+    @Test
+    fun testNavigateFromLifecycleObserver() {
+        val navController = createNavController()
+        navController.setLifecycleOwner(TestLifecycleOwner(Lifecycle.State.RESUMED))
+        navController.setGraph(R.navigation.nav_simple)
+
+        val receivedDestinationIds = mutableListOf<Int>()
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            receivedDestinationIds += destination.id
+        }
+
+        navController.navigate(R.id.second_test)
+
+        val startLifecycle = navController.getBackStackEntry(R.id.start_test).lifecycle
+        assertThat(startLifecycle.currentState).isEqualTo(Lifecycle.State.CREATED)
+        startLifecycle.addObserver(object : LifecycleEventObserver {
+            override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    navController.navigate(R.id.start_test_with_default_arg)
+                }
+            }
+        })
+
+        // Now call popBackStack() to trigger our observer
+        navController.popBackStack()
+
+        // And assert that we navigated correctly
+        assertThat(navController.currentDestination?.id)
+            .isEqualTo(R.id.start_test_with_default_arg)
+        assertThat(receivedDestinationIds)
+            .containsExactly(
+                R.id.start_test,
+                R.id.second_test,
+                R.id.start_test,
+                R.id.start_test_with_default_arg
+            )
+            .inOrder()
+    }
+
+    @UiThreadTest
+    @Test
+    fun testPopFromLifecycleObserver() {
+        val navController = createNavController()
+        navController.setLifecycleOwner(TestLifecycleOwner(Lifecycle.State.RESUMED))
+        navController.setGraph(R.navigation.nav_simple)
+
+        val receivedDestinationIds = mutableListOf<Int>()
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            receivedDestinationIds += destination.id
+        }
+
+        navController.navigate(R.id.second_test)
+        navController.navigate(R.id.start_test_with_default_arg)
+
+        val startLifecycle = navController.getBackStackEntry(R.id.second_test).lifecycle
+        assertThat(startLifecycle.currentState).isEqualTo(Lifecycle.State.CREATED)
+        startLifecycle.addObserver(object : LifecycleEventObserver {
+            override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    navController.popBackStack()
+                }
+            }
+        })
+
+        // Now call popBackStack() to trigger our observer
+        navController.popBackStack()
+
+        // And assert that we navigated correctly
+        assertThat(navController.currentDestination?.id).isEqualTo(R.id.start_test)
+        assertThat(receivedDestinationIds)
+            .containsExactly(
+                R.id.start_test,
+                R.id.second_test,
+                R.id.start_test_with_default_arg,
+                R.id.second_test,
+                R.id.start_test
+            )
+            .inOrder()
     }
 
     @UiThreadTest
@@ -1780,6 +1951,29 @@ class NavControllerTest {
             .createTaskStackBuilder()
 
         val intent = taskStackBuilder.editIntentAt(0)
+        assertThat(intent).isNotNull()
+        assertWithMessage("NavController should handle deep links to its own graph")
+            .that(navController.handleDeepLink(intent))
+            .isTrue()
+        // Verify that we navigated down to the deep link
+        assertThat(collectedDestinationIds)
+            .containsExactly(R.id.start_test, R.id.start_test, R.id.second_test)
+            .inOrder()
+    }
+
+    @UiThreadTest
+    @Test
+    fun testHandleDeepLinkAction() {
+        val navController = createNavController()
+        navController.setGraph(R.navigation.nav_simple)
+        val collectedDestinationIds = mutableListOf<Int>()
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            collectedDestinationIds.add(destination.id)
+        }
+
+        val intent = Intent("test.action").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
         assertThat(intent).isNotNull()
         assertWithMessage("NavController should handle deep links to its own graph")
             .that(navController.handleDeepLink(intent))

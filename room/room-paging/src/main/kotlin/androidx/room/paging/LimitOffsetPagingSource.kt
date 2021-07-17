@@ -40,6 +40,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * for Pager's consumption. Registers observers on tables lazily and automatically invalidates
  * itself when data changes.
  */
+
+private val INVALID = PagingSource.LoadResult.Invalid<Any, Any>()
+
 @RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
 abstract class LimitOffsetPagingSource<Value : Any>(
     private val sourceQuery: RoomSQLiteQuery,
@@ -75,7 +78,12 @@ abstract class LimitOffsetPagingSource<Value : Any>(
                 initialLoad(params)
             } else {
                 // otherwise, it is a subsequent load
-                loadFromDb(params, tempCount)
+                val loadResult = loadFromDb(params, tempCount)
+                // manually check if database has been updated. If so, the observers's
+                // invalidation callback will invalidate this paging source
+                db.invalidationTracker.refreshVersionsSync()
+                @Suppress("UNCHECKED_CAST")
+                if (invalid) INVALID as LoadResult.Invalid<Int, Value> else loadResult
             }
         }
     }
@@ -100,12 +108,12 @@ abstract class LimitOffsetPagingSource<Value : Any>(
 
     private suspend fun loadFromDb(
         params: LoadParams<Int>,
-        tempCount: Int,
+        itemCount: Int,
     ): LoadResult<Int, Value> {
         val key = params.key ?: 0
         val limit: Int = getLimit(params, key)
-        val offset: Int = getOffset(params, key)
-        return queryDatabase(offset, limit, tempCount)
+        val offset: Int = getOffset(params, key, itemCount)
+        return queryDatabase(offset, limit, itemCount)
     }
 
     /**
@@ -131,16 +139,29 @@ abstract class LimitOffsetPagingSource<Value : Any>(
      * If requested loadSize is larger than the number of available items to
      * prepend, OFFSET clips to 0 to prevent negative OFFSET.
      *
-     * Refresh: If initialKey is supplied through Pager, Paging 3 will now start loading from
-     * initialKey with initialKey being the first item. If key is supplied by [getRefreshKey],
-     * OFFSET will attempt to load around the anchorPosition with anchorPosition
-     * being the middle item. See comments on [getRefreshKey] for more details.
+     * Refresh:
+     * If initialKey is supplied through Pager, Paging 3 will now start loading from
+     * initialKey with initialKey being the first item.
+     * If key is supplied by [getRefreshKey],OFFSET will attempt to load around the anchorPosition
+     * with anchorPosition being the middle item. See comments on [getRefreshKey] for more details.
+     * If key (regardless if from initialKey or [getRefreshKey]) is larger than available items,
+     * the last page will be loaded by counting backwards the loadSize before last item in
+     * database. For example, this can happen if invalidation came from a large number of items
+     * dropped. i.e. in items 0 - 100, items 41-80 are dropped. Depending on last
+     * viewed item, hypothetically [getRefreshKey] may return key = 60. If loadSize = 10, then items
+     * 31-40 will be loaded.
      */
-    private fun getOffset(params: LoadParams<Int>, key: Int): Int {
+    private fun getOffset(params: LoadParams<Int>, key: Int, itemCount: Int): Int {
         return when (params) {
             is LoadParams.Prepend ->
                 if (key < params.loadSize) 0 else (key - params.loadSize)
-            else -> key
+            is LoadParams.Append -> key
+            is LoadParams.Refresh ->
+                if (key >= itemCount) {
+                    maxOf(0, itemCount - params.loadSize)
+                } else {
+                    key
+                }
         }
     }
 
@@ -159,7 +180,7 @@ abstract class LimitOffsetPagingSource<Value : Any>(
     private suspend fun queryDatabase(
         offset: Int,
         limit: Int,
-        tempCount: Int,
+        itemCount: Int,
     ): LoadResult<Int, Value> {
         val limitOffsetQuery =
             "SELECT * FROM ( ${sourceQuery.sql} ) LIMIT $limit OFFSET $offset"
@@ -178,7 +199,7 @@ abstract class LimitOffsetPagingSource<Value : Any>(
         }
         val nextPosToLoad = offset + data.size
         val nextKey =
-            if (data.isEmpty() || data.size < limit || nextPosToLoad >= tempCount) {
+            if (data.isEmpty() || data.size < limit || nextPosToLoad >= itemCount) {
                 null
             } else {
                 nextPosToLoad
@@ -189,7 +210,7 @@ abstract class LimitOffsetPagingSource<Value : Any>(
             prevKey = prevKey,
             nextKey = nextKey,
             itemsBefore = offset,
-            itemsAfter = maxOf(0, tempCount - nextPosToLoad)
+            itemsAfter = maxOf(0, itemCount - nextPosToLoad)
         )
     }
 

@@ -88,6 +88,7 @@ class ResourceInspectionProcessorTest {
                     public void mapProperties(@NonNull PropertyMapper propertyMapper) {
                         mTestAttributeId = propertyMapper.mapInt(
                             "testAttribute", R.attr.testAttribute);
+                        mPropertiesMapped = true;
                     }
 
                     @Override
@@ -184,6 +185,7 @@ class ResourceInspectionProcessorTest {
                             public void mapProperties(@NonNull PropertyMapper propertyMapper) {
                                 mColorId = propertyMapper.mapColor("color", android.R.attr.color);
                                 mColorId_ = propertyMapper.mapColor("color", R.attr.color);
+                                mPropertiesMapped = true;
                             }
 
                             @Override
@@ -409,6 +411,7 @@ class ResourceInspectionProcessorTest {
                                     .mapShort("testShort", R.attr.testShort);
                                 mTestStringId = propertyMapper
                                     .mapObject("testString", R.attr.testString);
+                                mPropertiesMapped = true;
                             }
 
                             @Override
@@ -561,6 +564,7 @@ class ResourceInspectionProcessorTest {
                                         }
                                     }
                                 );
+                                mPropertiesMapped = true;
                             }
 
                             @Override
@@ -672,6 +676,7 @@ class ResourceInspectionProcessorTest {
                                         }
                                     }
                                 );
+                                mPropertiesMapped = true;
                             }
 
                             @Override
@@ -782,7 +787,7 @@ class ResourceInspectionProcessorTest {
                     """
                 )
             )
-        ).hadErrorContaining("Attribute name must include namespace")
+        ).hadErrorContaining("@Attribute must include namespace")
     }
 
     @Test
@@ -845,6 +850,72 @@ class ResourceInspectionProcessorTest {
                 )
             )
         ).hadErrorContaining("@Attribute getter must be public")
+    }
+
+    @Test
+    fun `fails when R file for namespace is not present`() {
+        assertThat(
+            compile(
+                java(
+                    "androidx.pkg.MissingRFileTestView",
+                    """
+                        package androidx.pkg;
+
+                        import android.content.Context;
+                        import android.util.AttributeSet;
+                        import android.view.View;
+                        import androidx.resourceinspection.annotation.Attribute;
+
+                        public final class MissingRFileTestView extends View {
+                            public MissingRFileTestView(Context context, AttributeSet attrs) {
+                                super(context, attrs);
+                            }
+
+                            @Attribute("bad.pkg:attribute")
+                            public int getAttribute() {
+                                return 1;
+                            }
+                        }
+                    """
+                )
+            )
+        ).hadErrorContaining("Attribute bad.pkg:attribute not found")
+    }
+
+    @Test
+    fun `fails when attribute is not present in R file`() {
+        assertThat(
+            compile(
+                fakeR("androidx.pkg", "good"),
+                java(
+                    "androidx.pkg.MissingAttributeTestView",
+                    """
+                        package androidx.pkg;
+
+                        import android.content.Context;
+                        import android.util.AttributeSet;
+                        import android.view.View;
+                        import androidx.resourceinspection.annotation.Attribute;
+
+                        public final class MissingAttributeTestView extends View {
+                            public MissingAttributeTestView(Context context, AttributeSet attrs) {
+                                super(context, attrs);
+                            }
+
+                            @Attribute("androidx.pkg:good")
+                            public int getGood() {
+                                return 1;
+                            }
+
+                            @Attribute("androidx.pkg:bad")
+                            public int getBad() {
+                                return 2;
+                            }
+                        }
+                    """
+                )
+            )
+        ).hadErrorContaining("Attribute androidx.pkg:bad not found")
     }
 
     @Test
@@ -955,6 +1026,7 @@ class ResourceInspectionProcessorTest {
                                 .mapObject("backgroundTint", R.attr.backgroundTint);
                             mBackgroundTintModeId = propertyMapper
                                 .mapObject("backgroundTintMode", R.attr.backgroundTintMode);
+                            mPropertiesMapped = true;
                         }
 
                         @Override
@@ -1069,6 +1141,7 @@ class ResourceInspectionProcessorTest {
                                     }
                                 }
                             );
+                            mPropertiesMapped = true;
                         }
 
                         @Override
@@ -1163,6 +1236,7 @@ class ResourceInspectionProcessorTest {
                                 .mapObject("checkMarkTint", R.attr.checkMarkTint);
                             mCheckMarkTintModeId = propertyMapper
                                 .mapObject("checkMarkTintMode", R.attr.checkMarkTintMode);
+                            mPropertiesMapped = true;
                         }
 
                         @Override
@@ -1251,6 +1325,7 @@ class ResourceInspectionProcessorTest {
                                 .mapObject("buttonTint", R.attr.buttonTint);
                             mButtonTintModeId = propertyMapper
                                 .mapObject("buttonTintMode", R.attr.buttonTintMode);
+                            mPropertiesMapped = true;
                         }
 
                         @Override
@@ -1339,6 +1414,7 @@ class ResourceInspectionProcessorTest {
                                 .mapObject("drawableTint", R.attr.drawableTint);
                             mDrawableTintModeId = propertyMapper
                                 .mapObject("drawableTintMode", R.attr.drawableTintMode);
+                            mPropertiesMapped = true;
                         }
 
                         @Override
@@ -1425,6 +1501,7 @@ class ResourceInspectionProcessorTest {
                         public void mapProperties(@NonNull PropertyMapper propertyMapper) {
                             mTintId = propertyMapper.mapObject("tint", R.attr.tint);
                             mTintModeId = propertyMapper.mapObject("tintMode", R.attr.tintMode);
+                            mPropertiesMapped = true;
                         }
 
                         @Override
